@@ -95,6 +95,8 @@ function parsePlaylist(text) {
   return out;
 }
 
+let retryScheduled = false;
+
 async function refreshChannels() {
   try {
     const resp = await fetch(PLAYLIST_URL, {
@@ -109,6 +111,15 @@ async function refreshChannels() {
     console.log(`Playlist refreshed: ${channels.length} channels`);
   } catch (err) {
     console.error(`Playlist refresh failed: ${err.message}`);
+    // Transient failures (e.g. network not ready at container start) —
+    // retry soon rather than waiting for the next scheduled refresh
+    if (!retryScheduled) {
+      retryScheduled = true;
+      setTimeout(() => {
+        retryScheduled = false;
+        refreshChannels();
+      }, 60000);
+    }
   }
 }
 
