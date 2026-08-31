@@ -50,7 +50,8 @@ function applyFilter(list) {
   const f = loadFilter();
   if (!f || (f.channels.size === 0 && f.groups.size === 0)) return list;
   const matches = (c) =>
-    f.channels.has(c.name.toLowerCase()) || f.groups.has(c.group.toLowerCase());
+    f.channels.has(c.name.toLowerCase()) ||
+    c.groups.some((g) => f.groups.has(g.toLowerCase()));
   return f.mode === "allow" ? list.filter(matches) : list.filter((c) => !matches(c));
 }
 
@@ -119,7 +120,11 @@ function parsePlaylist(text) {
         quality,
         tags,
         logo: attrs["tvg-logo"] || null,
-        group: attrs["group-title"] || "Other",
+        // group-title can be compound, e.g. "Animation;Comedy;Kids"
+        groups: (attrs["group-title"] || "Other")
+          .split(";")
+          .map((g) => g.trim())
+          .filter(Boolean),
         url: line,
       });
       pending = null;
@@ -242,7 +247,7 @@ app.get("/api/channels", (req, res) => {
       quality: c.quality,
       tags: c.tags,
       logo: c.logo,
-      group: c.group,
+      groups: c.groups,
       src: proxyUrl(c.url),
     })),
   });

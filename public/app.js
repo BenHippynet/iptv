@@ -86,7 +86,7 @@
   function visibleChannels() {
     let list = channels;
     if (activeGroup === "★ Favorites") list = list.filter((c) => favs.has(c.id));
-    else if (activeGroup !== "All") list = list.filter((c) => c.group === activeGroup);
+    else if (activeGroup !== "All") list = list.filter((c) => c.groups.includes(activeGroup));
     if (query) {
       const q = query.toLowerCase();
       list = list.filter((c) => c.name.toLowerCase().includes(q));
@@ -95,7 +95,7 @@
   }
 
   function renderGroups() {
-    const names = [...new Set(channels.map((c) => c.group))].sort();
+    const names = [...new Set(channels.flatMap((c) => c.groups))].sort();
     const all = ["All", "★ Favorites", ...names];
     groupsNav.innerHTML = "";
     for (const g of all) {
