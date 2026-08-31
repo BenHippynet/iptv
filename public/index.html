@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DJB IPTV</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">📺 <span>DJB&nbsp;IPTV</span></div>
+    <input id="search" type="search" placeholder="Search channels…" autocomplete="off" />
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <div id="player-wrap" hidden>
+    <div id="player-bar">
+      <span id="now-playing"></span>
+      <button id="close-player" title="Close player">✕</button>
+    </div>
+    <video id="video" controls autoplay playsinline></video>
+    <div id="player-error" hidden></div>
+  </div>
+
+  <nav id="groups"></nav>
+
+  <main id="grid"></main>
+
+  <footer>Streams aggregated from <a href="https://github.com/iptv-org/iptv" target="_blank" rel="noopener">iptv-org</a> · free-to-air public streams</footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

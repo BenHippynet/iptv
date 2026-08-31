@@ -1,0 +1,35 @@
+services:
+  iptv:
+    build: .
+    container_name: iptv
+    restart: unless-stopped
+    networks:
+      - traefik-proxy
+    environment:
+      - PLAYLIST_URL=https://iptv-org.github.io/iptv/countries/uk.m3u
+      - PROXY_SECRET=${PROXY_SECRET}
+      - TZ=UTC
+    labels:
+      - "traefik.enable=true"
+
+      # HTTP router (redirects to HTTPS)
+      - "traefik.http.routers.iptv-http.rule=Host(`iptv.djbenjones.co.uk`)"
+      - "traefik.http.routers.iptv-http.entrypoints=web"
+      - "traefik.http.routers.iptv-http.middlewares=iptv-redirect"
+
+      # HTTPS router
+      - "traefik.http.routers.iptv.rule=Host(`iptv.djbenjones.co.uk`)"
+      - "traefik.http.routers.iptv.entrypoints=websecure"
+      - "traefik.http.routers.iptv.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.iptv.service=iptv"
+
+      # Middleware to redirect HTTP to HTTPS
+      - "traefik.http.middlewares.iptv-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.iptv-redirect.redirectscheme.permanent=true"
+
+      # Service definition
+      - "traefik.http.services.iptv.loadbalancer.server.port=3000"
+
+networks:
+  traefik-proxy:
+    external: true
