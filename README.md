@@ -19,12 +19,20 @@ https://iptv.djbenjones.co.uk from server1 (192.168.4.3) behind Traefik.
 
 ## EPG (now & next)
 
-`epg.js` downloads the free UK XMLTV feed from epgshare01.online (`EPG_URL`)
-every 12 hours and matches its channels to ours by exact `tvg-id`, then
-normalized id/name, then the hand-written `ALIASES` map (needed for
-abbreviated BBC regional names like "BBC.One.E.Mid.HD.uk"). Roughly 79
-channels match — the mainstream ones; the long tail (Red Button, Pluto,
-obscure streams) has no data in the feed. `/api/epg` serves now/next for
+`epg.js` refreshes two free sources every 12 hours, either surviving the
+other's failure (last-good data is kept per source):
+
+- **XMLTV** from epgshare01.online (`EPG_URL`) — matched by exact `tvg-id`,
+  then normalized id/name, then the hand-written `ALIASES` map (needed for
+  abbreviated BBC regional names like "BBC.One.E.Mid.HD.uk")
+- **Pluto TV** (`PLUTO_API`, no credentials needed) — Pluto-sourced streams
+  embed Pluto's channel `_id` in their URL (`jmp2.uk/plu-<id>.m3u8`), so
+  matching is an exact id join. The fetch is pinned to IPv4 because the
+  box's IPv6 egresses abroad and Pluto geo-targets the lineup by IP.
+
+Roughly 166 channels match; the remaining tail (Red Button, Samsung
+TV Plus-sourced streams like FailArmy, obscure streams) has no data in
+either source. `/api/epg` serves now/next for
 visible channels; `/api/epg/status` shows match stats and the unmatched
 list (useful when tuning aliases). The UI shows the current programme and
 a progress bar on each card, and now/next in the player bar.
