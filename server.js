@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { Readable } = require("stream");
+const epg = require("./epg");
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const PLAYLIST_URL =
@@ -116,6 +117,7 @@ function parsePlaylist(text) {
       const displayName = name.replace(/\s*\(\d+p\)/g, "").replace(/\s*\[[^\]]+\]/g, "").trim();
       out.push({
         id: crypto.createHash("sha1").update(line).digest("hex").slice(0, 12),
+        tvgId: attrs["tvg-id"] || null,
         name: displayName,
         quality,
         tags,
@@ -147,6 +149,7 @@ async function refreshChannels() {
     channels = parsed;
     lastRefresh = new Date();
     console.log(`Playlist refreshed: ${channels.length} channels`);
+    epg.rebuildMapping(channels);
   } catch (err) {
     console.error(`Playlist refresh failed: ${err.message}`);
     // Transient failures (e.g. network not ready at container start) —
@@ -253,6 +256,19 @@ app.get("/api/channels", (req, res) => {
   });
 });
 
+// Now & next for filtered channels only — payload stays small
+app.get("/api/epg", (req, res) => {
+  const visible = new Set(applyFilter(channels).map((c) => c.id));
+  const all = epg.getNowNext();
+  const out = {};
+  for (const [id, v] of Object.entries(all)) if (visible.has(id)) out[id] = v;
+  res.json({ epg: out });
+});
+
+app.get("/api/epg/status", (req, res) => {
+  res.json(epg.status());
+});
+
 app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
@@ -266,5 +282,23 @@ app.use(express.static(path.join(__dirname, "public")));
 
 refreshChannels();
 setInterval(refreshChannels, REFRESH_HOURS * 60 * 60 * 1000);
+
+let epgRetryScheduled = false;
+async function refreshEpgSafe() {
+  try {
+    await epg.refreshEpg(() => channels);
+  } catch (err) {
+    console.error(`EPG refresh failed: ${err.message}`);
+    if (!epgRetryScheduled) {
+      epgRetryScheduled = true;
+      setTimeout(() => {
+        epgRetryScheduled = false;
+        refreshEpgSafe();
+      }, 10 * 60 * 1000);
+    }
+  }
+}
+refreshEpgSafe();
+setInterval(refreshEpgSafe, 12 * 60 * 60 * 1000);
 
 app.listen(PORT, () => console.log(`IPTV server listening on :${PORT}`));

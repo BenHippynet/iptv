@@ -14,6 +14,10 @@
   let query = "";
   let playingId = null;
   let hls = null;
+  let epg = {};
+
+  const fmtTime = (ms) =>
+    new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
   const favs = new Set(JSON.parse(localStorage.getItem("iptv-favs") || "[]"));
   const saveFavs = () => localStorage.setItem("iptv-favs", JSON.stringify([...favs]));
@@ -41,6 +45,7 @@
     playerWrap.hidden = false;
     playerError.hidden = true;
     nowPlaying.textContent = ch.name + (ch.quality ? ` (${ch.quality})` : "");
+    updatePlayerEpg();
     document.querySelector(`.card[data-id="${ch.id}"]`)?.classList.add("playing");
     playerWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
@@ -80,6 +85,33 @@
   }
 
   closeBtn.addEventListener("click", stopPlayback);
+
+  function updatePlayerEpg() {
+    const el = document.getElementById("player-epg");
+    const info = playingId && epg[playingId];
+    if (!info || (!info.now && !info.next)) {
+      el.hidden = true;
+      return;
+    }
+    const parts = [];
+    if (info.now)
+      parts.push(
+        `<strong>Now:</strong> ${escapeHtml(info.now.title)} <span class="epg-time">${fmtTime(info.now.start)}–${fmtTime(info.now.stop)}</span>`
+      );
+    if (info.next)
+      parts.push(
+        `<strong>Next:</strong> ${escapeHtml(info.next.title)} <span class="epg-time">${fmtTime(info.next.start)}</span>`
+      );
+    el.innerHTML = parts.join(" &nbsp;·&nbsp; ");
+    if (info.now?.desc) el.title = info.now.desc;
+    el.hidden = false;
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("span");
+    d.textContent = s;
+    return d.innerHTML;
+  }
 
   // ---------------- Rendering ----------------
 
@@ -167,7 +199,23 @@
         if (activeGroup === "★ Favorites") renderGrid();
       });
 
-      card.append(fav, logo, name, badges);
+      const info = epg[ch.id];
+      if (info?.now) {
+        const nowLine = document.createElement("div");
+        nowLine.className = "epg-now";
+        nowLine.textContent = info.now.title;
+        if (info.now.desc) nowLine.title = info.now.desc;
+        const prog = document.createElement("div");
+        prog.className = "epg-progress";
+        const pct = Math.min(
+          100,
+          Math.max(0, ((Date.now() - info.now.start) / (info.now.stop - info.now.start)) * 100)
+        );
+        prog.innerHTML = `<span style="width:${pct.toFixed(1)}%"></span>`;
+        card.append(fav, logo, name, badges, nowLine, prog);
+      } else {
+        card.append(fav, logo, name, badges);
+      }
       card.addEventListener("click", () => play(ch));
       grid.appendChild(card);
     }
@@ -184,6 +232,18 @@
 
   // ---------------- Init ----------------
 
+  async function loadEpg() {
+    try {
+      const resp = await fetch("/api/epg");
+      const data = await resp.json();
+      epg = data.epg || {};
+      renderGrid();
+      updatePlayerEpg();
+    } catch {
+      /* EPG is best-effort */
+    }
+  }
+
   async function init() {
     try {
       const resp = await fetch("/api/channels");
@@ -197,5 +257,6 @@
     }
   }
 
-  init();
+  init().then(loadEpg);
+  setInterval(loadEpg, 5 * 60 * 1000);
 })();
