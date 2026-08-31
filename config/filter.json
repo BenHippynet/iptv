@@ -1,5 +1,35 @@
 {
   "mode": "block",
-  "channels": [],
-  "groups": []
+  "groups": ["Religious"],
+  "channels": [
+    "Aaj Tak",
+    "Aathavan TV",
+    "Alb UK TV",
+    "Alhiwar TV",
+    "Anand TV",
+    "ATN Bangla UK",
+    "Brit Asia TV",
+    "Canaf54 TV",
+    "Channel S",
+    "Deen TV",
+    "Der TV",
+    "Dunya News (UK Feed)",
+    "Eurochannel",
+    "Garshom TV",
+    "Hala London",
+    "Hellenic TV",
+    "IBC Tamil",
+    "Iran International",
+    "Kalsan TV",
+    "Kanal Jadid",
+    "MBC",
+    "Nolly Africa HD",
+    "Sangat TV",
+    "Star Vijay",
+    "Takbeer TV",
+    "TBN UK",
+    "Utsav Bharat",
+    "Utsav Plus",
+    "Zee One"
+  ]
 }
