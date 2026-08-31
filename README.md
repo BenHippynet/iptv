@@ -17,6 +17,26 @@ https://iptv.djbenjones.co.uk from server1 (192.168.4.3) behind Traefik.
 - Frontend is vanilla JS + [hls.js](https://github.com/video-dev/hls.js) with
   a channel grid, category filters, search, and favourites (localStorage).
 
+## Curating channels
+
+`config/filter.json` controls which channels are served (matching is
+case-insensitive against the channel name or its category group):
+
+```json
+{
+  "mode": "block",
+  "channels": ["Aaj Tak", "Alb UK TV"],
+  "groups": ["Religious", "Shop"]
+}
+```
+
+- `mode: "block"` — hide the listed channels/groups, keep everything else
+- `mode: "allow"` — keep ONLY the listed channels/groups
+- The file is re-read on every request, so edits apply immediately — no
+  restart needed. Edit it locally and rsync, or edit `/root/iptv/config/filter.json`
+  on the server directly (note a later deploy rsync will overwrite server-side
+  edits, so prefer editing the repo copy).
+
 Some channels in the playlist are marked `[Geo-blocked]` or `[Not 24/7]` —
 those may fail to play; the UI shows the tags as badges and surfaces a
 playback error rather than hanging.

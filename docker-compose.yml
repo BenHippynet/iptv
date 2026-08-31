@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     networks:
       - traefik-proxy
+    volumes:
+      - /root/iptv/config:/app/config:ro
     environment:
       - PLAYLIST_URL=https://iptv-org.github.io/iptv/countries/uk.m3u
       - PROXY_SECRET=${PROXY_SECRET}
