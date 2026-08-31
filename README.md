@@ -17,6 +17,18 @@ https://iptv.djbenjones.co.uk from server1 (192.168.4.3) behind Traefik.
 - Frontend is vanilla JS + [hls.js](https://github.com/video-dev/hls.js) with
   a channel grid, category filters, search, and favourites (localStorage).
 
+## EPG (now & next)
+
+`epg.js` downloads the free UK XMLTV feed from epgshare01.online (`EPG_URL`)
+every 12 hours and matches its channels to ours by exact `tvg-id`, then
+normalized id/name, then the hand-written `ALIASES` map (needed for
+abbreviated BBC regional names like "BBC.One.E.Mid.HD.uk"). Roughly 79
+channels match — the mainstream ones; the long tail (Red Button, Pluto,
+obscure streams) has no data in the feed. `/api/epg` serves now/next for
+visible channels; `/api/epg/status` shows match stats and the unmatched
+list (useful when tuning aliases). The UI shows the current programme and
+a progress bar on each card, and now/next in the player bar.
+
 ## Curating channels
 
 `config/filter.json` controls which channels are served (matching is
