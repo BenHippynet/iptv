@@ -3,9 +3,11 @@
 // aliases), and answers "what's on now & next" per channel.
 
 const zlib = require("zlib");
+const https = require("https");
 
 const EPG_URL =
   process.env.EPG_URL || "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz";
+const PLUTO_API = process.env.PLUTO_API || "https://api.pluto.tv/v2/channels";
 const UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
@@ -38,6 +40,12 @@ let programmes = new Map(); // epgId -> [{start, stop, title, desc}] sorted by s
 let mapping = new Map(); // our channel id -> epgId
 let unmatched = [];
 let lastEpgRefresh = null;
+// Last-good data per source, so one source failing doesn't drop the other.
+// Pluto ids are stored prefixed "pluto:" to avoid clashing with XMLTV ids.
+const sources = {
+  xmltv: { chans: new Map(), progs: new Map(), fetched: null, error: null },
+  pluto: { chans: new Map(), progs: new Map(), fetched: null, error: null },
+};
 
 function decodeEntities(s) {
   return s
@@ -126,6 +134,13 @@ function rebuildMapping(channels) {
   mapping = new Map();
   unmatched = [];
   for (const c of channels) {
+    // Pluto-sourced streams embed Pluto's channel _id in the URL
+    // (jmp2.uk/plu-<id>.m3u8) — an exact join, so it wins outright.
+    const plutoId = (c.url.match(/\/plu-([a-f0-9]{24})/) || [])[1];
+    if (plutoId && programmes.has(`pluto:${plutoId}`)) {
+      mapping.set(c.id, `pluto:${plutoId}`);
+      continue;
+    }
     const tvgBase = (c.tvgId || "").split("@")[0];
     const epgId =
       byId.get(tvgBase) ||
@@ -139,22 +154,99 @@ function rebuildMapping(channels) {
   }
 }
 
-async function refreshEpg(getChannels) {
+// Pluto geo-targets by IP; the box's IPv6 egresses in the wrong country,
+// so this fetch is pinned to IPv4.
+function fetchIPv4(url, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      { family: 4, headers: { "user-agent": UA }, timeout: timeoutMs },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode}`));
+        }
+        const bufs = [];
+        res.on("data", (d) => bufs.push(d));
+        res.on("end", () => resolve(Buffer.concat(bufs)));
+        res.on("error", reject);
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", reject);
+  });
+}
+
+async function fetchXmltv() {
   const resp = await fetch(EPG_URL, {
     headers: { "user-agent": UA },
     signal: AbortSignal.timeout(120000),
   });
-  if (!resp.ok) throw new Error(`EPG fetch: HTTP ${resp.status}`);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const gz = Buffer.from(await resp.arrayBuffer());
   const xml = zlib.gunzipSync(gz).toString("utf8");
   const { chans, progs } = parseFeed(xml);
-  if (chans.size === 0 || progs.size === 0) throw new Error("EPG parsed empty");
-  epgNames = chans;
-  programmes = progs;
+  if (chans.size === 0 || progs.size === 0) throw new Error("parsed empty");
+  return { chans, progs };
+}
+
+async function fetchPluto() {
+  const start = new Date();
+  start.setUTCMinutes(0, 0, 0);
+  const stop = new Date(start.getTime() + 14 * 3600e3);
+  const url = `${PLUTO_API}?start=${start.toISOString()}&stop=${stop.toISOString()}`;
+  const list = JSON.parse((await fetchIPv4(url)).toString("utf8"));
+  if (!Array.isArray(list) || list.length === 0) throw new Error("empty channel list");
+  const chans = new Map();
+  const progs = new Map();
+  for (const c of list) {
+    if (!c._id || !c.name) continue;
+    const key = `pluto:${c._id}`;
+    chans.set(key, [c.name]);
+    const items = [];
+    for (const t of c.timelines || []) {
+      const startTs = Date.parse(t.start);
+      const stopTs = Date.parse(t.stop);
+      if (!startTs || !stopTs || !t.title) continue;
+      const desc = t.episode?.description;
+      items.push({
+        start: startTs,
+        stop: stopTs,
+        title: t.title,
+        desc: desc ? String(desc).slice(0, 300) : null,
+      });
+    }
+    if (items.length) {
+      items.sort((a, b) => a.start - b.start);
+      progs.set(key, items);
+    }
+  }
+  if (progs.size === 0) throw new Error("no timelines");
+  return { chans, progs };
+}
+
+async function refreshEpg(getChannels) {
+  const jobs = { xmltv: fetchXmltv(), pluto: fetchPluto() };
+  for (const [name, job] of Object.entries(jobs)) {
+    try {
+      const { chans, progs } = await job;
+      sources[name] = { chans, progs, fetched: new Date(), error: null };
+    } catch (err) {
+      sources[name].error = err.message;
+      console.error(`EPG source ${name} failed: ${err.message} (keeping last good data)`);
+    }
+  }
+  if (sources.xmltv.progs.size === 0 && sources.pluto.progs.size === 0) {
+    throw new Error("all EPG sources failed");
+  }
+
+  epgNames = new Map([...sources.xmltv.chans, ...sources.pluto.chans]);
+  programmes = new Map([...sources.xmltv.progs, ...sources.pluto.progs]);
   lastEpgRefresh = new Date();
   rebuildMapping(getChannels());
   console.log(
-    `EPG refreshed: ${chans.size} channels, ${[...progs.values()].reduce((a, l) => a + l.length, 0)} programmes, ${mapping.size} matched`
+    `EPG refreshed: ${epgNames.size} channels (${sources.pluto.chans.size} pluto), ` +
+      `${[...programmes.values()].reduce((a, l) => a + l.length, 0)} programmes, ${mapping.size} matched`
   );
 }
 
@@ -184,6 +276,12 @@ function status() {
     lastEpgRefresh,
     epgChannels: epgNames.size,
     matched: mapping.size,
+    sources: Object.fromEntries(
+      Object.entries(sources).map(([k, s]) => [
+        k,
+        { channels: s.chans.size, withProgrammes: s.progs.size, fetched: s.fetched, error: s.error },
+      ])
+    ),
     unmatched,
   };
 }
