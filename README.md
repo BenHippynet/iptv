@@ -37,6 +37,19 @@ visible channels; `/api/epg/status` shows match stats and the unmatched
 list (useful when tuning aliases). The UI shows the current programme and
 a progress bar on each card, and now/next in the player bar.
 
+## Admin page
+
+`/admin` (currently unauthenticated) shows live viewer sessions and recent
+history. Playback segments all flow through `/stream`, so those requests
+double as heartbeats: proxy URLs carry a `c=<channelId>` tag, and the server
+tracks one session per IP+channel (ended after 2 minutes without a request,
+kept in a 200-entry history). Shows IP, reverse-DNS hostname (best-effort,
+cached 1h), channel, watch duration, last activity, bytes served, and
+browser/OS. Data lives in memory only — restarts clear it. JSON at
+`/api/admin/sessions`. Client IP comes from X-Forwarded-For via Traefik
+(`trust proxy` is on, so direct-to-container requests could spoof it —
+irrelevant while the only route in is Traefik).
+
 ## Curating channels
 
 `config/filter.json` controls which channels are served (matching is
