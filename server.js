@@ -19,6 +19,8 @@ const UA =
 
 const app = express();
 app.disable("x-powered-by");
+// Behind Traefik — real client IP arrives in X-Forwarded-For
+app.set("trust proxy", true);
 
 let channels = [];
 let lastRefresh = null;
@@ -64,8 +66,9 @@ function sign(url) {
   return crypto.createHmac("sha256", SECRET).update(url).digest("base64url").slice(0, 24);
 }
 
-function proxyUrl(url) {
-  return `/stream?u=${Buffer.from(url).toString("base64url")}&s=${sign(url)}`;
+function proxyUrl(url, channelId) {
+  const c = channelId ? `&c=${channelId}` : "";
+  return `/stream?u=${Buffer.from(url).toString("base64url")}&s=${sign(url)}${c}`;
 }
 
 function verifyProxyReq(req) {
@@ -165,10 +168,74 @@ async function refreshChannels() {
 }
 
 // ---------------------------------------------------------------------------
+// Viewer session tracking — every playback request hits /stream, so segment
+// fetches double as a heartbeat. A session is one IP watching one channel;
+// it ends after SESSION_GAP_MS without a request.
+// ---------------------------------------------------------------------------
+
+const dns = require("dns");
+
+const SESSION_GAP_MS = 2 * 60 * 1000;
+const sessions = new Map(); // "ip|channelId" -> session
+const history = []; // ended sessions, newest first
+const rdnsCache = new Map(); // ip -> { host, at }
+
+function resolveHost(ip) {
+  const hit = rdnsCache.get(ip);
+  if (hit && Date.now() - hit.at < 3600e3) return;
+  rdnsCache.set(ip, { host: null, at: Date.now() });
+  dns.promises
+    .reverse(ip)
+    .then((names) => rdnsCache.set(ip, { host: names[0] || null, at: Date.now() }))
+    .catch(() => {});
+}
+
+function endSession(key) {
+  const s = sessions.get(key);
+  if (!s) return;
+  sessions.delete(key);
+  history.unshift({ ...s, endedAt: s.lastSeen });
+  if (history.length > 200) history.length = 200;
+}
+
+function trackView(req, channelId) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const key = `${ip}|${channelId}`;
+  const now = Date.now();
+  let s = sessions.get(key);
+  if (s && now - s.lastSeen > SESSION_GAP_MS) {
+    endSession(key);
+    s = null;
+  }
+  if (!s) {
+    s = {
+      ip,
+      channelId,
+      firstSeen: now,
+      lastSeen: now,
+      bytes: 0,
+      ua: req.headers["user-agent"] || "",
+    };
+    sessions.set(key, s);
+    resolveHost(ip);
+  }
+  s.lastSeen = now;
+  return s;
+}
+
+// Sweep idle sessions into history
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, s] of sessions) {
+    if (now - s.lastSeen > SESSION_GAP_MS) endSession(key);
+  }
+}, 30000);
+
+// ---------------------------------------------------------------------------
 // HLS proxy — pipes segments, rewrites playlists so all URIs route through us
 // ---------------------------------------------------------------------------
 
-function rewriteM3u8(text, baseUrl) {
+function rewriteM3u8(text, baseUrl, channelId) {
   return text
     .split("\n")
     .map((line) => {
@@ -178,14 +245,14 @@ function rewriteM3u8(text, baseUrl) {
         // Rewrite URI="..." in EXT-X-KEY, EXT-X-MEDIA, EXT-X-MAP, etc.
         return line.replace(/URI="([^"]+)"/g, (m, uri) => {
           try {
-            return `URI="${proxyUrl(new URL(uri, baseUrl).href)}"`;
+            return `URI="${proxyUrl(new URL(uri, baseUrl).href, channelId)}"`;
           } catch {
             return m;
           }
         });
       }
       try {
-        return proxyUrl(new URL(t, baseUrl).href);
+        return proxyUrl(new URL(t, baseUrl).href, channelId);
       } catch {
         return line;
       }
@@ -196,6 +263,9 @@ function rewriteM3u8(text, baseUrl) {
 app.get("/stream", async (req, res) => {
   const url = verifyProxyReq(req);
   if (!url) return res.status(403).send("Invalid stream URL");
+
+  const channelId = typeof req.query.c === "string" ? req.query.c.slice(0, 16) : null;
+  const sess = channelId ? trackView(req, channelId) : null;
 
   let upstream;
   try {
@@ -223,7 +293,8 @@ app.get("/stream", async (req, res) => {
       const text = await upstream.text();
       res.set("content-type", "application/vnd.apple.mpegurl");
       res.set("cache-control", "no-store");
-      return res.send(rewriteM3u8(text, finalUrl));
+      if (sess) sess.bytes += text.length;
+      return res.send(rewriteM3u8(text, finalUrl, channelId));
     } catch {
       return res.status(502).send("Failed to read upstream playlist");
     }
@@ -232,6 +303,7 @@ app.get("/stream", async (req, res) => {
   res.set("content-type", ctype || "video/mp2t");
   res.set("cache-control", "no-store");
   const body = Readable.fromWeb(upstream.body);
+  if (sess) body.on("data", (d) => (sess.bytes += d.length));
   body.on("error", () => res.destroy());
   res.on("close", () => body.destroy());
   body.pipe(res);
@@ -251,7 +323,7 @@ app.get("/api/channels", (req, res) => {
       tags: c.tags,
       logo: c.logo,
       groups: c.groups,
-      src: proxyUrl(c.url),
+      src: proxyUrl(c.url, c.id),
     })),
   });
 });
@@ -267,6 +339,25 @@ app.get("/api/epg", (req, res) => {
 
 app.get("/api/epg/status", (req, res) => {
   res.json(epg.status());
+});
+
+app.get("/api/admin/sessions", (req, res) => {
+  const nameOf = (id) => channels.find((c) => c.id === id)?.name || id;
+  const shape = (s) => ({
+    ip: s.ip,
+    host: rdnsCache.get(s.ip)?.host || null,
+    channel: nameOf(s.channelId),
+    firstSeen: s.firstSeen,
+    lastSeen: s.lastSeen,
+    endedAt: s.endedAt || null,
+    bytes: s.bytes,
+    ua: s.ua,
+  });
+  res.json({
+    now: Date.now(),
+    active: [...sessions.values()].sort((a, b) => a.firstSeen - b.firstSeen).map(shape),
+    recent: history.slice(0, 50).map(shape),
+  });
 });
 
 app.get("/healthz", (req, res) => {

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DJB IPTV Admin</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>" />
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    main.admin {
+      display: block;
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    h2 {
+      font-size: 15px;
+      margin: 22px 0 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    h2 .count { color: var(--accent); }
+    .tbl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--surface); }
+    th, td { padding: 9px 12px; text-align: left; white-space: nowrap; }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+    tr + tr td { border-top: 1px solid var(--border); }
+    td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+    td.dim, .dim { color: var(--text-dim); }
+    .dot {
+      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      margin-right: 7px; background: #4ade80; vertical-align: 1px;
+    }
+    .dot.stale { background: #e6b450; }
+    .empty-row { color: var(--text-dim); text-align: center; padding: 22px !important; }
+    .backlink { color: var(--accent); text-decoration: none; font-size: 13px; margin-left: auto; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">🛠️ <span>IPTV&nbsp;Admin</span></div>
+    <div class="meta" id="updated"></div>
+    <a class="backlink" href="/">← status page</a>
+  </header>
+
+  <main class="admin" style="padding: 6px 20px 30px">
+    <h2>Watching now <span class="count" id="active-count"></span></h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th></th><th>IP</th><th>Hostname</th><th>Channel</th><th>Watching for</th><th>Last activity</th><th>Data</th><th>Device</th></tr></thead>
+        <tbody id="active"></tbody>
+      </table>
+    </div>
+
+    <h2>Recent sessions</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>IP</th><th>Hostname</th><th>Channel</th><th>Watched for</th><th>Ended</th><th>Data</th><th>Device</th></tr></thead>
+        <tbody id="recent"></tbody>
+      </table>
+    </div>
+  </main>
+
+  <script>
+    const fmtDur = (ms) => {
+      const s = Math.max(0, Math.round(ms / 1000));
+      if (s < 60) return s + "s";
+      const m = Math.floor(s / 60), h = Math.floor(m / 60);
+      if (h > 0) return h + "h " + (m % 60) + "m";
+      return m + "m " + (s % 60) + "s";
+    };
+    const fmtBytes = (b) => {
+      if (b > 1e9) return (b / 1e9).toFixed(2) + " GB";
+      if (b > 1e6) return (b / 1e6).toFixed(1) + " MB";
+      return Math.round(b / 1e3) + " kB";
+    };
+    const fmtDevice = (ua) => {
+      const os = (ua.match(/iPhone|iPad|Android|Windows|Macintosh|CrOS|Linux/) || [""])[0]
+        .replace("Macintosh", "Mac").replace("CrOS", "ChromeOS");
+      let br = "";
+      if (/Edg\//.test(ua)) br = "Edge";
+      else if (/OPR\//.test(ua)) br = "Opera";
+      else if (/Firefox\//.test(ua)) br = "Firefox";
+      else if (/Chrome\//.test(ua)) br = "Chrome";
+      else if (/Safari\//.test(ua)) br = "Safari";
+      return [br, os].filter(Boolean).join(" · ") || "—";
+    };
+    const esc = (s) => { const d = document.createElement("span"); d.textContent = s ?? ""; return d.innerHTML; };
+
+    async function refresh() {
+      try {
+        const d = await (await fetch("/api/admin/sessions")).json();
+        const active = document.getElementById("active");
+        const recent = document.getElementById("recent");
+        document.getElementById("active-count").textContent = d.active.length ? `(${d.active.length})` : "";
+        document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
+
+        active.innerHTML = d.active.length
+          ? d.active.map((s) => `<tr>
+              <td><span class="dot${d.now - s.lastSeen > 30000 ? " stale" : ""}"></span></td>
+              <td class="mono">${esc(s.ip)}</td>
+              <td class="mono dim">${esc(s.host || "—")}</td>
+              <td>${esc(s.channel)}</td>
+              <td>${fmtDur(d.now - s.firstSeen)}</td>
+              <td class="dim">${fmtDur(d.now - s.lastSeen)} ago</td>
+              <td class="dim">${fmtBytes(s.bytes)}</td>
+              <td class="dim">${esc(fmtDevice(s.ua))}</td>
+            </tr>`).join("")
+          : '<tr><td colspan="8" class="empty-row">Nobody is watching right now</td></tr>';
+
+        recent.innerHTML = d.recent.length
+          ? d.recent.map((s) => `<tr>
+              <td class="mono">${esc(s.ip)}</td>
+              <td class="mono dim">${esc(s.host || "—")}</td>
+              <td>${esc(s.channel)}</td>
+              <td>${fmtDur(s.endedAt - s.firstSeen)}</td>
+              <td class="dim">${fmtDur(d.now - s.endedAt)} ago</td>
+              <td class="dim">${fmtBytes(s.bytes)}</td>
+              <td class="dim">${esc(fmtDevice(s.ua))}</td>
+            </tr>`).join("")
+          : '<tr><td colspan="7" class="empty-row">No sessions yet</td></tr>';
+      } catch {}
+    }
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>
