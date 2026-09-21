@@ -2,6 +2,7 @@
   "name": "iptv",
   "version": "1.0.0",
   "description": "Self-hosted web UI for free-to-air IPTV streams",
+  "license": "MIT",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

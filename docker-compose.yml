@@ -6,7 +6,7 @@ services:
     networks:
       - traefik-proxy
     volumes:
-      - /root/iptv/config:/app/config:ro
+      - ./config:/app/config:ro
     environment:
       - PLAYLIST_URL=https://iptv-org.github.io/iptv/countries/uk.m3u
       - PROXY_SECRET=${PROXY_SECRET}
@@ -15,12 +15,12 @@ services:
       - "traefik.enable=true"
 
       # HTTP router (redirects to HTTPS)
-      - "traefik.http.routers.iptv-http.rule=Host(`iptv.djbenjones.co.uk`)"
+      - "traefik.http.routers.iptv-http.rule=Host(`${IPTV_HOSTNAME}`)"
       - "traefik.http.routers.iptv-http.entrypoints=web"
       - "traefik.http.routers.iptv-http.middlewares=iptv-redirect"
 
       # HTTPS router
-      - "traefik.http.routers.iptv.rule=Host(`iptv.djbenjones.co.uk`)"
+      - "traefik.http.routers.iptv.rule=Host(`${IPTV_HOSTNAME}`)"
       - "traefik.http.routers.iptv.entrypoints=websecure"
       - "traefik.http.routers.iptv.tls.certresolver=letsencrypt"
       - "traefik.http.routers.iptv.service=iptv"
